@@ -146,28 +146,6 @@ Demonstrates expertise in:
 🔧 Production-quality Python code
 📈 Quantitative finance concepts
 
-🏗 Architecture
-┌─────────────────┐
-│   NewsAPI       │  Fetch real-time financial news
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   FinBERT       │  Sentiment analysis (Transformers)
-│   Transformer   │  Confidence scoring
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Analysis      │  Signal generation
-│   Engine        │  Risk assessment
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Reports       │  Professional output
-│   Generator     │  Multi-format export
-└─────────────────┘
 🔧 Configuration
 Environment Variables
 bashNEWSAPI_KEY=your_api_key_here
