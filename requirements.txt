@@ -1,0 +1,18 @@
+# Core dependencies for FinBERT Financial News Analyzer
+# Python 3.8+ required
+
+# Deep Learning & NLP
+transformers>=4.30.0
+torch>=2.0.0
+tokenizers>=0.13.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# News API
+newsapi-python>=0.2.7
+
+# Optional: For better performance
+# accelerate>=0.20.0  # Faster model loading
+# sentencepiece>=0.1.99  # Additional tokenizer support
