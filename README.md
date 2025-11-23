@@ -2,9 +2,6 @@
 
 AI-powered financial sentiment analysis system using FinBERT transformer model with real-time news integration
 
-Show Image
-Show Image
-Show Image
 📋 Overview
 A professional-grade financial news analysis system that leverages FinBERT (a BERT model fine-tuned on financial text) to analyze market sentiment and generate actionable trading signals. Built for demonstrating AI/ML applications in quantitative finance and alternative data analysis.
 Key Features
@@ -38,9 +35,6 @@ pip package manager
 Quick Setup
 
 Clone the repository
-
-bashgit clone https://github.com/yourusername/finbert-news-analyzer.git
-cd finbert-news-analyzer
 
 Install dependencies
 
@@ -202,11 +196,7 @@ This tool is for educational and informational purposes only. It does not consti
 📄 License
 This project is licensed under the MIT License - see the LICENSE file for details.
 👤 Author
-Your Name
-
-GitHub: @yourusername
-LinkedIn: Your LinkedIn
-Email: your.email@example.com
+Athul VM
 
 🙏 Acknowledgments
 
@@ -214,10 +204,6 @@ FinBERT Model by ProsusAI
 NewsAPI for news data
 Hugging Face for Transformers library
 
-📊 Project Stats
-Show Image
-Show Image
-Show Image
 
 ⭐ Star this repo if you find it useful! ⭐
 Built with ❤ for the finance and AI community
