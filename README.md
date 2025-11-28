@@ -6,12 +6,17 @@ Overview
 A professional-grade financial news analysis system that leverages FinBERT (a BERT model fine-tuned on financial text) to analyze market sentiment and generate actionable trading signals. Built for demonstrating AI/ML applications in quantitative finance and alternative data analysis.
 Key Features
 
-🎯 FinBERT Sentiment Analysis - 97% accuracy on financial text classification
-📰 Real-Time News Integration - Fetches live financial news via NewsAPI
-📊 Trading Signal Generation - BUY/SELL/HOLD recommendations with confidence scores
-📈 Multi-Asset Comparison - Comparative sentiment analysis across multiple stocks
-📑 Investment Reports - Institutional-quality research reports
-⚡ Risk & Catalyst Analysis - Identifies key drivers and risk factors
+FinBERT Sentiment Analysis - 97% accuracy on financial text classification
+
+Real-Time News Integration - Fetches live financial news via NewsAPI
+
+Trading Signal Generation - BUY/SELL/HOLD recommendations with confidence scores
+
+Multi-Asset Comparison - Comparative sentiment analysis across multiple stocks
+
+Investment Reports - Institutional-quality research reports
+
+Risk & Catalyst Analysis - Identifies key drivers and risk factors
 
 🚀 Demo Output
 Article 1: POSITIVE (confidence: 91.23%)
