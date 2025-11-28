@@ -66,7 +66,7 @@ $env:NEWSAPI_KEY='your-api-key-here'
 Run the analyzer
 
 bashpython financial_news_analyzer.py
-💡 Usage
+ Usage
 Basic Usage
 pythonfrom financial_news_analyzer import FinancialNewsAnalyzer
 
@@ -113,7 +113,7 @@ Recommended Action
 Article-by-Article Breakdown
 News Sources
 
-🧠 Model Information
+ Model Information
 FinBERT (ProsusAI/finbert)
 
 Pre-trained on 10,000+ financial news articles
@@ -128,7 +128,7 @@ Understands domain-specific terminology:
 
 
 
-📈 Use Cases
+ Use Cases
 For Finance Professionals
 
 Portfolio Managers: Monitor sentiment for holdings
@@ -139,13 +139,13 @@ Risk Managers: Track negative news catalysts
 For Recruitment/Interviews
 Demonstrates expertise in:
 
-🤖 AI/ML integration in finance
-📊 Alternative data analysis
-💼 Financial domain knowledge
-🔧 Production-quality Python code
-📈 Quantitative finance concepts
+ AI/ML integration in finance
+ Alternative data analysis
+ Financial domain knowledge
+ Production-quality Python code
+ Quantitative finance concepts
 
-🔧 Configuration
+ Configuration
 Environment Variables
 bashNEWSAPI_KEY=your_api_key_here
 Customization Options
@@ -155,7 +155,7 @@ Date range for news search
 Sentiment threshold for signals
 Confidence level filters
 
-📚 Technical Stack
+ Technical Stack
 
 ML Framework: Hugging Face Transformers
 Deep Learning: PyTorch
@@ -163,14 +163,14 @@ Data Processing: Pandas, NumPy
 News API: NewsAPI (news aggregation)
 NLP Model: FinBERT (financial sentiment)
 
-🎯 Performance
+ Performance
 
 Analysis Speed: 2-5 seconds per article
 Model Load Time: 2-3 seconds (after first download)
 Memory Usage: ~500MB (with model loaded)
 Accuracy: 97% on financial sentiment tasks
 
-📝 Example Reports
+ Example Reports
 See examples/ directory for sample outputs:
 
 apple_analysis.txt - Single stock deep dive
