@@ -10,7 +10,15 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Tuple
 import warnings
 import os
+import argparse
 warnings.filterwarnings('ignore')
+
+# Load environment variables from a local .env file (e.g. NEWSAPI_KEY)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv optional; env vars can still be set in the shell
 
 # Financial sentiment analysis
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
@@ -24,6 +32,20 @@ except ImportError:
     NEWSAPI_AVAILABLE = False
     print("⚠️  NewsAPI not installed. Run: pip install newsapi-python")
     print("    Using sample news for now.\n")
+
+# Historical prices for backtesting
+try:
+    import yfinance as yf
+    YFINANCE_AVAILABLE = True
+except ImportError:
+    YFINANCE_AVAILABLE = False
+
+# Convenience map so news queries (names) resolve to stock tickers for backtests
+TICKER_MAP = {
+    "apple": "AAPL", "microsoft": "MSFT", "tesla": "TSLA", "nvidia": "NVDA",
+    "amazon": "AMZN", "google": "GOOGL", "alphabet": "GOOGL", "meta": "META",
+    "facebook": "META", "netflix": "NFLX", "amd": "AMD", "intel": "INTC",
+}
 
 
 class FinancialNewsAnalyzer:
@@ -477,6 +499,211 @@ class FinancialNewsAnalyzer:
         
         return pd.DataFrame(results)
     
+    def backtest(self, query: str, ticker: str, days: int = 30,
+                 articles_per_day: int = 8, signal_threshold: float = 2.0) -> Dict:
+        """
+        Test whether news sentiment predicts next-day price moves.
+
+        For each trading day it aggregates the sentiment of news published since
+        the prior close, then measures the stock's return from that day's close
+        to the next day's close (so trades only act on news already seen — no
+        look-ahead). Reports correlation, directional hit-rate, and a simple
+        long/short strategy vs. buy-and-hold.
+
+        NOTE: NewsAPI's free tier serves only ~30 days of history, so the sample
+        is tiny (typically 10-20 trading days). Treat the output as a methodology
+        demonstration, NOT a statistically validated trading signal.
+
+        Args:
+            query: news search term (e.g. "Apple")
+            ticker: stock symbol for price data (e.g. "AAPL")
+            days: lookback window in days (capped at 30 by free NewsAPI)
+            max_articles: max articles to pull in the single API request
+            signal_threshold: |sentiment| above which the strategy takes a position
+        """
+        print("\n" + "=" * 90)
+        print(f"BACKTEST: Does news sentiment predict {ticker.upper()} price moves?")
+        print("=" * 90 + "\n")
+
+        if not YFINANCE_AVAILABLE:
+            print("❌ yfinance not installed. Run: pip install yfinance")
+            return {}
+
+        if not self.newsapi:
+            print("❌ Backtesting needs REAL news (NewsAPI) — sample data has no usable dates.")
+            print("   Set NEWSAPI_KEY in your .env and try again.")
+            return {}
+
+        # Free NewsAPI tier caps history at ~1 month
+        days = min(days, 30)
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=days)
+
+        # 1 & 2. Fetch news ONE DAY AT A TIME so coverage spreads across the window.
+        # (A single sorted request just returns the newest ~100 articles, which for a
+        #  popular query all cluster on the last day — giving only one data point.)
+        print(f"📰 Fetching ~{articles_per_day} '{query}' articles/day across {days} days "
+              f"(≈{days} API requests)...")
+        records = []
+        total_articles = 0
+        for offset in range(days, -1, -1):
+            day_str = (to_date - timedelta(days=offset)).strftime('%Y-%m-%d')
+            try:
+                resp = self.newsapi.get_everything(
+                    q=query,
+                    from_param=day_str,
+                    to=day_str,
+                    language='en',
+                    sort_by='relevancy',
+                    page_size=min(articles_per_day, 20),
+                )
+            except Exception as e:
+                print(f"⚠️  NewsAPI error on {day_str}: {e}")
+                continue
+            arts = resp.get('articles', [])
+            total_articles += len(arts)
+            for a in arts:
+                title = a.get('title') or ''
+                body = a.get('description') or a.get('content') or ''
+                text = f"{title}. {body}".strip()
+                if not text or text == '.':
+                    continue
+                _, _, probs = self.analyze_text_sentiment(text)
+                score = (probs['positive'] - probs['negative']) * 10
+                records.append({'date': day_str, 'score': score})
+
+        if not records:
+            print("❌ No scorable articles returned for this query/date range.")
+            return {}
+        print(f"✅ Scored {total_articles} articles across the window.")
+
+        news_df = pd.DataFrame(records)
+        news_df['date'] = pd.to_datetime(news_df['date'])
+
+        # 3. Download daily prices (pad end so the last day has a next-day close)
+        print(f"📈 Downloading {ticker.upper()} prices from Yahoo Finance...\n")
+        prices = yf.download(
+            ticker,
+            start=from_date.strftime('%Y-%m-%d'),
+            end=(to_date + timedelta(days=4)).strftime('%Y-%m-%d'),
+            progress=False,
+            auto_adjust=True,
+        )
+        if prices is None or prices.empty:
+            print(f"❌ No price data for ticker '{ticker}'. Check the symbol.")
+            return {}
+
+        # yfinance can return MultiIndex columns even for a single ticker
+        close = prices['Close']
+        if isinstance(close, pd.DataFrame):
+            close = close.iloc[:, 0]
+        close = close.dropna()
+        close.index = close.index.normalize()
+        trading_days = close.index.sort_values()
+
+        # 4. Attribute each article to the next trading day on/after its publish date
+        #    (news over a weekend counts toward the following Monday)
+        def next_trading_day(d):
+            pos = trading_days.searchsorted(d.normalize())
+            return trading_days[pos] if pos < len(trading_days) else pd.NaT
+
+        news_df['tday'] = news_df['date'].apply(next_trading_day)
+        news_df = news_df.dropna(subset=['tday'])
+        daily_sent = news_df.groupby('tday')['score'].mean()
+        article_counts = news_df.groupby('tday')['score'].count()
+
+        # 5. Forward return: close[T] -> close[T+1], recorded on day T
+        fwd_return = close.pct_change().shift(-1)
+
+        merged = pd.DataFrame({'sentiment': daily_sent})
+        merged['articles'] = article_counts
+        merged['fwd_return'] = fwd_return.reindex(merged.index)
+        merged = merged.dropna(subset=['fwd_return']).sort_index()
+
+        if len(merged) == 0:
+            print("❌ No overlap between news days and trading days — nothing to test.")
+            return {}
+
+        # 6. Metrics
+        sent = merged['sentiment'].values
+        ret = merged['fwd_return'].values
+        n = len(merged)
+
+        if n >= 2 and np.std(sent) > 0 and np.std(ret) > 0:
+            corr = float(np.corrcoef(sent, ret)[0, 1])
+        else:
+            corr = float('nan')
+
+        # Directional hit-rate (skip near-neutral days)
+        mask = np.abs(sent) > 0.5
+        hit_rate = float(np.mean(np.sign(sent[mask]) == np.sign(ret[mask]))) if mask.sum() else float('nan')
+
+        # Simple strategy: long if sentiment > thr, short if < -thr, else flat
+        position = np.where(sent > signal_threshold, 1,
+                            np.where(sent < -signal_threshold, -1, 0))
+        strat_daily = position * ret
+        strat_cum = float(np.prod(1 + strat_daily) - 1)
+        bh_cum = float(np.prod(1 + ret) - 1)
+        trades = int(np.sum(position != 0))
+
+        # 7. Day-by-day table
+        print(f"{'Date':<12}{'Articles':>9}{'Sentiment':>11}{'Next-day %':>12}{'Agree?':>8}")
+        print("-" * 52)
+        for day, row in merged.iterrows():
+            s = row['sentiment']
+            r = row['fwd_return'] * 100
+            agree = "—" if abs(s) <= 0.5 else ("✓" if np.sign(s) == np.sign(r) else "✗")
+            print(f"{day.strftime('%Y-%m-%d'):<12}{int(row['articles']):>9}"
+                  f"{s:>+11.2f}{r:>+11.2f}%{agree:>8}")
+
+        # 8. Summary
+        print("\n" + "=" * 90)
+        print("BACKTEST RESULTS")
+        print("=" * 90)
+        print(f"  Trading days tested:        {n}")
+        print(f"  Correlation (sentiment vs next-day return): "
+              f"{corr:+.3f}" if corr == corr else "  Correlation: n/a (not enough variation)")
+        if hit_rate == hit_rate:
+            print(f"  Directional hit-rate:       {hit_rate:.0%}  "
+                  f"(coin-flip = 50%; {int(mask.sum())} non-neutral days)")
+        else:
+            print("  Directional hit-rate:       n/a (no non-neutral days)")
+        print(f"\n  Strategy (|sentiment| > {signal_threshold}, long/short): "
+              f"{strat_cum:+.2%}  over {trades} trade-days")
+        print(f"  Buy & hold over same window:                 {bh_cum:+.2%}")
+        edge = strat_cum - bh_cum
+        print(f"  Strategy edge vs buy & hold:                 {edge:+.2%}")
+
+        print("\n" + "-" * 90)
+        print("⚠️  INTERPRETATION")
+        print("-" * 90)
+        if n < 15:
+            print(f"  Only {n} data points — this is FAR too small to conclude anything.")
+            print("  The free NewsAPI tier (~30 days history) makes a real backtest impossible;")
+            print("  this run demonstrates the METHOD. For real results you'd need months/years")
+            print("  of historical news (paid NewsAPI, or an archive like GDELT).")
+        else:
+            print("  Still a small sample — directional/correlation results are suggestive at best.")
+        if corr == corr:
+            direction = "positively" if corr > 0 else "negatively"
+            strength = ("essentially no" if abs(corr) < 0.1 else
+                        "a weak" if abs(corr) < 0.3 else "a moderate")
+            print(f"  Observed: sentiment correlates {direction} with next-day returns "
+                  f"({strength} relationship).")
+        print("=" * 90 + "\n")
+
+        return {
+            "ticker": ticker.upper(),
+            "query": query,
+            "days_tested": n,
+            "correlation": corr,
+            "hit_rate": hit_rate,
+            "strategy_return": strat_cum,
+            "buy_hold_return": bh_cum,
+            "edge": edge,
+            "data": merged,
+        }
+
     def generate_report(self, query: str, analysis: Dict, articles: List[Dict]) -> str:
         """Generate professional investment report."""
         
@@ -591,33 +818,8 @@ financial advisors before making investment decisions.
         return report
 
 
-def main():
-    """Main execution function."""
-    
-    print("="*90)
-    print("FINBERT FINANCIAL NEWS ANALYSIS SYSTEM")
-    print("="*90)
-    print("\n🚀 Initializing FinBERT sentiment analyzer...")
-    print("Note: First run will download the model (~400MB)\n")
-    
-    # Get NewsAPI key from environment or user input
-    newsapi_key = os.getenv('NEWSAPI_KEY')
-    
-    if not newsapi_key:
-        print("="*90)
-        print("NEWSAPI SETUP")
-        print("="*90)
-        print("\nTo use REAL news, get a free API key from: https://newsapi.org")
-        print("Free tier includes: 100 requests/day, 7 days of historical news")
-        print("\nThen set it as environment variable:")
-        print("  export NEWSAPI_KEY='your-key-here'")
-        print("\nOr pass it when creating analyzer:")
-        print("  analyzer = FinancialNewsAnalyzer(newsapi_key='your-key')")
-        print("\nFor now, running with sample news...\n")
-    
-    # Initialize analyzer
-    analyzer = FinancialNewsAnalyzer(newsapi_key=newsapi_key)
-    
+def run_demo(analyzer):
+    """Run the original three-example showcase."""
     # Example 1: Single asset analysis
     print("\n" + "="*90)
     print("EXAMPLE 1: DEEP DIVE - SINGLE ASSET ANALYSIS")
@@ -667,6 +869,79 @@ def main():
     print("  3. Integrate with portfolio management system")
     print("  4. Build automated alert system")
     print("  5. Add backtesting: sentiment vs. price movements")
+
+
+def main():
+    """Parse CLI arguments and dispatch."""
+    parser = argparse.ArgumentParser(
+        description="FinBERT financial news sentiment analyzer",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+examples:
+  # Analyze one stock's recent news
+  python "fin news analyser.py" --query "Tesla" --count 5
+
+  # Compare several stocks
+  python "fin news analyser.py" --compare "Apple,Microsoft,NVIDIA"
+
+  # Backtest: does sentiment predict next-day price? (needs NEWSAPI_KEY)
+  python "fin news analyser.py" --backtest --query "Apple" --ticker AAPL
+
+  # Run the original three-example showcase
+  python "fin news analyser.py" --demo
+""",
+    )
+    parser.add_argument('--query', help='Company or topic to analyze')
+    parser.add_argument('--count', type=int, default=3, help='Number of articles (default 3)')
+    parser.add_argument('--compare', help='Comma-separated list of assets to compare')
+    parser.add_argument('--backtest', action='store_true',
+                        help='Backtest news sentiment vs. next-day price moves')
+    parser.add_argument('--ticker', help='Stock ticker for --backtest (e.g. AAPL); '
+                                         'inferred from --query for well-known names')
+    parser.add_argument('--days', type=int, default=30,
+                        help='Backtest lookback window in days (max 30 on free NewsAPI)')
+    parser.add_argument('--demo', action='store_true',
+                        help='Run the original three-example showcase')
+    args = parser.parse_args()
+
+    print("=" * 90)
+    print("FINBERT FINANCIAL NEWS ANALYSIS SYSTEM")
+    print("=" * 90)
+    print("\n🚀 Initializing FinBERT sentiment analyzer...")
+    print("Note: First run will download the model (~400MB)\n")
+
+    newsapi_key = os.getenv('NEWSAPI_KEY')
+    if not newsapi_key:
+        print("⚠️  No NEWSAPI_KEY found — running on built-in SAMPLE news.")
+        print("    Get a free key at https://newsapi.org and add it to your .env file.\n")
+
+    analyzer = FinancialNewsAnalyzer(newsapi_key=newsapi_key)
+
+    # Dispatch based on arguments
+    if args.backtest:
+        query = args.query or args.ticker
+        ticker = args.ticker or TICKER_MAP.get((args.query or '').lower())
+        if not query or not ticker:
+            parser.error("--backtest needs --ticker (and ideally --query). "
+                         "e.g. --backtest --query Apple --ticker AAPL")
+        analyzer.backtest(query, ticker, days=args.days)
+
+    elif args.compare:
+        assets = [a.strip() for a in args.compare.split(',') if a.strip()]
+        comparison_df = analyzer.compare_multiple_assets(assets)
+        print("\n📊 SENTIMENT COMPARISON TABLE")
+        print("=" * 90)
+        print(comparison_df.to_string(index=False))
+        print()
+
+    elif args.query:
+        articles = analyzer.fetch_news(args.query, num_results=args.count)
+        analysis = analyzer.analyze_sentiment(articles)
+        print(analyzer.generate_report(args.query, analysis, articles))
+
+    else:
+        # No action specified → run the showcase
+        run_demo(analyzer)
 
 
 if __name__ == "__main__":
